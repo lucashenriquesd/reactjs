@@ -1,0 +1,19 @@
+services:
+  reactjs:
+    build:
+      context: ./
+      dockerfile: local.node.Dockerfile
+    tty: true
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+      - "${NODE_DEBUG_PORT:-9229}:9229"
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - reactjs_node_modules:/app/node_modules
+    environment:
+      # O navegador executa o código e acessa o backend via host (localhost) na porta exposta pelo NestJS (3000).
+      - VITE_API_URL=http://localhost:3000
+
+volumes:
+  reactjs_node_modules:
