@@ -1,9 +1,10 @@
 FROM node:24.15-alpine3.23
 
-# Instalando o Git e outras ferramentas essenciais
+# Instalando o Git (essencial para o VS Code ler o histórico quando atachado)
 # O --no-cache evita salvar arquivos temporários, mantendo a imagem leve
 RUN apk add --no-cache git
 
+# Instala o pnpm globalmente direto pelo npm (evitando bugs de corepack/chaves)
 RUN npm install -g pnpm
 
 # Criar um usuário que combine com o seu UID do host 1001 (NixOS/WSL2) antes de definir o WORKDIR
@@ -21,6 +22,7 @@ USER nodeuser
 # Assim, o store e os pacotes ficam isolados no mesmo volume do Docker
 RUN pnpm config set store-dir /app/node_modules/.pnpm-store
 
+# Copia package.json e (se existir) o pnpm-lock.yaml
 COPY --chown=nodeuser:nodeuser package.json pnpm-lock.yam[l] ./
 
 RUN pnpm install

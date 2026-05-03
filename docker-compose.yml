@@ -6,7 +6,7 @@ services:
     tty: true
     ports:
       - "${VITE_PORT:-5173}:5173"
-      - "${NODE_DEBUG_PORT:-9229}:9229"
+      - "${NODE_DEBUG_PORT:-9230}:9229"
     working_dir: /app
     volumes:
       - ./:/app
