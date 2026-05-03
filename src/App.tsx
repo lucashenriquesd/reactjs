@@ -4,22 +4,39 @@ import * as stylex from '@stylexjs/stylex';
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Novos estados para o controle Stateless
+  const [isStateless, setIsStateless] = useState(false);
+  const [statelessLocked, setStatelessLocked] = useState(false);
+
   const [chat, setChat] = useState([
     { role: 'ai', text: 'Olá! Sou seu assistente local. Como posso ajudar?' },
   ]);
 
+  const startNewChat = () => {
+    setIsStateless(false);
+    setStatelessLocked(false);
+    setPrompt('');
+    setChat([{ role: 'ai', text: 'Olá! Sou seu assistente local. Como posso ajudar?' }]);
+  };
+
+  const startStatelessChat = () => {
+    setIsStateless(true);
+    setStatelessLocked(false);
+    setPrompt('');
+    setChat([{ role: 'ai', text: 'Modo Stateless ativo ⚡\nFaça uma pergunta única. O contexto não será salvo para a próxima interação.' }]);
+  };
+
   const handleSend = async () => {
-    if (!prompt.trim() || isLoading) return;
+    if (!prompt.trim() || isLoading || statelessLocked) return;
 
     const userText = prompt;
-    setPrompt(''); // Limpa o input imediatamente
+    setPrompt(''); 
     
-    // Adiciona a mensagem do usuário ao histórico
     setChat((prev) => [...prev, { role: 'user', text: userText }]);
     setIsLoading(true);
 
     try {
-      // Fazendo a chamada para o seu backend NestJS
       const response = await fetch('http://localhost:3000/ollama/generate', {
         method: 'POST',
         headers: {
@@ -36,11 +53,14 @@ export default function App() {
       }
 
       const responseJson = await response.json();
+      const aiResponseText = responseJson.data?.response || responseJson.response || "Resposta recebida";
 
-      const aiResponseText = responseJson.data.response;
-
-      // Adiciona a resposta da IA ao histórico
       setChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
+
+      // Bloqueia o chat se estiver no modo stateless após o sucesso da resposta
+      if (isStateless) {
+        setStatelessLocked(true);
+      }
 
     } catch (error) {
       console.error('Erro ao chamar o NestJS:', error);
@@ -53,20 +73,38 @@ export default function App() {
     }
   };
 
+  // Trava o input se estiver carregando OU se a conversa stateless já foi concluída
+  const isInputDisabled = isLoading || statelessLocked;
+
   return (
     <div {...stylex.props(s.layout)}>
       <aside {...stylex.props(s.sidebar)}>
-        {/* ... botões da sidebar mantidos iguais ... */}
-        <button {...stylex.props(s.newChatBtn)}>
+        <button {...stylex.props(s.newChatBtn)} onClick={startNewChat}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
           </svg>
-          Novo chat
+          Novo chat normal
         </button>
+
+        {/* Botão de fixar o modo Stateless no menu */}
+        <button 
+          {...stylex.props(s.chatItem, isStateless && s.activeItem)} 
+          onClick={startStatelessChat}
+          style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <span style={{ fontSize: '18px' }}>⚡</span>
+          Modo Stateless
+        </button>
+        
+        <div {...stylex.props(s.historyTitle)}>Recentes</div>
+        <button {...stylex.props(s.chatItem)}>Exemplo de histórico...</button>
       </aside>
 
       <main {...stylex.props(s.main)}>
-        <header {...stylex.props(s.header)}>Gemini Clone (NestJS Backend)</header>
+        <header {...stylex.props(s.header)}>
+          Gemini Clone (NestJS)
+          {isStateless && <span {...stylex.props(s.badge)}>Stateless</span>}
+        </header>
 
         <div {...stylex.props(s.chatContainer)}>
           <div {...stylex.props(s.chatWrapper)}>
@@ -75,13 +113,12 @@ export default function App() {
                 <div {...stylex.props(s.avatar, msg.role === 'ai' ? s.avatarAi : s.avatarUser)}>
                   {msg.role === 'ai' ? '✦' : 'U'}
                 </div>
-                <div {...stylex.props(s.messageBubble, msg.role === 'ai' ? s.bubbleAi : s.bubbleUser)}>
+                <div {...stylex.props(s.messageBubble, msg.role === 'ai' ? s.bubbleAi : s.bubbleUser)} style={{ whiteSpace: 'pre-wrap' }}>
                   {msg.text}
                 </div>
               </div>
             ))}
 
-            {/* Indicador visual de loading enquanto aguarda o NestJS */}
             {isLoading && (
               <div {...stylex.props(s.messageRow)}>
                 <div {...stylex.props(s.avatar, s.avatarAi)}>✦</div>
@@ -94,14 +131,18 @@ export default function App() {
         </div>
 
         <div {...stylex.props(s.inputArea)}>
-          <div {...stylex.props(s.inputWrapper)}>
+          <div {...stylex.props(s.inputWrapper, isInputDisabled && s.inputWrapperDisabled)}>
             <textarea
               {...stylex.props(s.textarea)}
               rows={1}
-              placeholder="Digite um prompt aqui"
+              placeholder={
+                statelessLocked 
+                  ? "Modo Stateless concluído. Inicie um novo chat." 
+                  : "Digite um prompt aqui"
+              }
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              disabled={isLoading}
+              disabled={isInputDisabled}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -110,9 +151,9 @@ export default function App() {
               }}
             />
             <button 
-              {...stylex.props(s.sendButton, isLoading && s.sendButtonDisabled)} 
+              {...stylex.props(s.sendButton, isInputDisabled && s.sendButtonDisabled)} 
               onClick={handleSend} 
-              disabled={isLoading}
+              disabled={isInputDisabled}
               title="Enviar"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -161,7 +202,7 @@ const s = stylex.create({
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: 500,
-    marginBottom: '24px',
+    marginBottom: '16px',
     transition: 'background-color 0.2s',
     backgroundColor: { 
       default: '#282a2c', 
@@ -188,6 +229,10 @@ const s = stylex.create({
     borderWidth: 0,
     textAlign: 'left',
   },
+  activeItem: {
+    backgroundColor: '#333538',
+    color: '#c2e7ff',
+  },
 
   // --- ÁREA PRINCIPAL ---
   main: {
@@ -201,6 +246,17 @@ const s = stylex.create({
     fontSize: '22px',
     fontWeight: 500,
     color: '#e3e3e3',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px'
+  },
+  badge: {
+    fontSize: '12px',
+    backgroundColor: '#004a77',
+    color: '#c2e7ff',
+    padding: '4px 8px',
+    borderRadius: '12px',
+    fontWeight: 'bold',
   },
   
   // --- HISTÓRICO DA CONVERSA ---
@@ -283,6 +339,10 @@ const s = stylex.create({
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: { default: 'transparent', ':focus-within': '#444746' },
+  },
+  inputWrapperDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#1a1a1a',
   },
   textarea: {
     flexGrow: 1,
