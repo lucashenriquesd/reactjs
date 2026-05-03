@@ -3,64 +3,96 @@ import * as stylex from '@stylexjs/stylex';
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const [chat, setChat] = useState([
-    { role: 'ai', text: 'Olá! Sou um assistente virtual. Como posso ajudar você hoje?' },
-    { role: 'user', text: 'Gere um layout em StyleX para mim.' },
-    { role: 'ai', text: 'Claro! Aqui está o seu layout perfeitamente estruturado usando Co-location no StyleX.' }
+    { role: 'ai', text: 'Olá! Sou seu assistente local. Como posso ajudar?' },
   ]);
 
-  const handleSend = () => {
-    if (!prompt.trim()) return;
-    setChat([...chat, { role: 'user', text: prompt }]);
-    setPrompt('');
-    // Aqui entraria a lógica de chamada da API
+  const handleSend = async () => {
+    if (!prompt.trim() || isLoading) return;
+
+    const userText = prompt;
+    setPrompt(''); // Limpa o input imediatamente
+    
+    // Adiciona a mensagem do usuário ao histórico
+    setChat((prev) => [...prev, { role: 'user', text: userText }]);
+    setIsLoading(true);
+
+    try {
+      // Fazendo a chamada para o seu backend NestJS
+      const response = await fetch('http://localhost:3000/ollama/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gemma4',
+          prompt: userText,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro na API: ${response.statusText}`);
+      }
+
+      const responseJson = await response.json();
+
+      const aiResponseText = responseJson.data.response;
+
+      // Adiciona a resposta da IA ao histórico
+      setChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
+
+    } catch (error) {
+      console.error('Erro ao chamar o NestJS:', error);
+      setChat((prev) => [
+        ...prev, 
+        { role: 'ai', text: 'Desculpe, ocorreu um erro ao se comunicar com o servidor local.' }
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
     <div {...stylex.props(s.layout)}>
-      
-      {/* LATERAL ESQUERDA - HISTÓRICO */}
       <aside {...stylex.props(s.sidebar)}>
+        {/* ... botões da sidebar mantidos iguais ... */}
         <button {...stylex.props(s.newChatBtn)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
           </svg>
           Novo chat
         </button>
-        
-        <div {...stylex.props(s.historyTitle)}>Recentes</div>
-        <button {...stylex.props(s.chatItem)}>Layout em StyleX</button>
-        <button {...stylex.props(s.chatItem)}>Configuração Vite + Eslint</button>
-        <button {...stylex.props(s.chatItem)}>Receita de Bolo de Cenoura</button>
       </aside>
 
-      {/* LADO DIREITO - ÁREA PRINCIPAL */}
       <main {...stylex.props(s.main)}>
-        <header {...stylex.props(s.header)}>Gemini Clone</header>
+        <header {...stylex.props(s.header)}>Gemini Clone (NestJS Backend)</header>
 
-        {/* ÁREA DE ROLAGEM DA CONVERSA */}
         <div {...stylex.props(s.chatContainer)}>
           <div {...stylex.props(s.chatWrapper)}>
             {chat.map((msg, index) => (
-              <div 
-                key={index} 
-                {...stylex.props(s.messageRow, msg.role === 'user' && s.messageRowUser)}
-              >
-                {/* Avatar */}
+              <div key={index} {...stylex.props(s.messageRow, msg.role === 'user' && s.messageRowUser)}>
                 <div {...stylex.props(s.avatar, msg.role === 'ai' ? s.avatarAi : s.avatarUser)}>
                   {msg.role === 'ai' ? '✦' : 'U'}
                 </div>
-                
-                {/* Balão de Mensagem */}
                 <div {...stylex.props(s.messageBubble, msg.role === 'ai' ? s.bubbleAi : s.bubbleUser)}>
                   {msg.text}
                 </div>
               </div>
             ))}
+
+            {/* Indicador visual de loading enquanto aguarda o NestJS */}
+            {isLoading && (
+              <div {...stylex.props(s.messageRow)}>
+                <div {...stylex.props(s.avatar, s.avatarAi)}>✦</div>
+                <div {...stylex.props(s.messageBubble, s.bubbleAi)}>
+                  <span style={{ opacity: 0.6 }}>Pensando...</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ÁREA DO TEXTAREA (FIXA NO RODAPÉ) */}
         <div {...stylex.props(s.inputArea)}>
           <div {...stylex.props(s.inputWrapper)}>
             <textarea
@@ -69,6 +101,7 @@ export default function App() {
               placeholder="Digite um prompt aqui"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              disabled={isLoading}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -76,7 +109,12 @@ export default function App() {
                 }
               }}
             />
-            <button {...stylex.props(s.sendButton)} onClick={handleSend} title="Enviar">
+            <button 
+              {...stylex.props(s.sendButton, isLoading && s.sendButtonDisabled)} 
+              onClick={handleSend} 
+              disabled={isLoading}
+              title="Enviar"
+            >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
               </svg>
@@ -84,7 +122,6 @@ export default function App() {
           </div>
         </div>
       </main>
-
     </div>
   );
 }
@@ -271,5 +308,10 @@ const s = stylex.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: { default: 'transparent', ':hover': '#333538' },
+  },
+  sendButtonDisabled: {
+    color: '#555',
+    cursor: 'not-allowed',
+    backgroundColor: 'transparent',
   },
 });
