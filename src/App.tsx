@@ -1,14 +1,20 @@
 import { useState } from 'react';
 import * as stylex from '@stylexjs/stylex';
 
-// Novo limite do Gemma 4 (256K tokens)
+// Limite do Gemma 4
 const MAX_TOKENS = 256000; 
+
+// Variável de breakpoint para mobile
+const MOBILE = '@media (max-width: 768px)';
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  // Novos estados para o controle Stateless
+  // Controle de layout mobile
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Estados Stateless
   const [isStateless, setIsStateless] = useState(false);
   const [statelessLocked, setStatelessLocked] = useState(false);
 
@@ -21,6 +27,7 @@ export default function App() {
     setStatelessLocked(false);
     setPrompt('');
     setChat([{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }]);
+    setIsSidebarOpen(false); // Fecha o menu no mobile ao escolher
   };
 
   const startStatelessChat = () => {
@@ -28,6 +35,7 @@ export default function App() {
     setStatelessLocked(false);
     setPrompt('');
     setChat([{ role: 'ai', text: 'Modo Stateless ativo ⚡\nFaça uma pergunta única. O contexto não será salvo para a próxima interação.' }]);
+    setIsSidebarOpen(false); // Fecha o menu no mobile ao escolher
   };
 
   const handleSend = async () => {
@@ -36,17 +44,14 @@ export default function App() {
     const userText = prompt;
     setPrompt(''); 
     
-    // Atualiza a interface com a mensagem do usuário
     setChat((prev) => [...prev, { role: 'user', text: userText }]);
     setIsLoading(true);
 
     try {
-      // Filtra mensagens de introdução inúteis para não gastar tokens
       const validHistory = chat.filter(
         c => c.role === 'user' || (c.role === 'ai' && !c.text.includes('Olá! Sou seu') && !c.text.includes('Modo Stateless'))
       );
 
-      // Formata o histórico como uma string única, ou deixa vazio se for stateless
       let finalPrompt = userText;
       
       if (!isStateless && validHistory.length > 0) {
@@ -54,7 +59,6 @@ export default function App() {
           .map((msg) => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`)
           .join('\n');
         
-        // Concatena o histórico com a pergunta atual
         finalPrompt = `${historyText}\nUser: ${userText}\nAI:`;
       }
 
@@ -79,7 +83,6 @@ export default function App() {
 
       setChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
 
-      // Bloqueia o chat se estiver no modo stateless após o sucesso da resposta
       if (isStateless) {
         setStatelessLocked(true);
       }
@@ -97,18 +100,25 @@ export default function App() {
 
   const isInputDisabled = isLoading || statelessLocked;
 
-  // LÓGICA DO CONTADOR DE TOKENS (Estimativa 1 token ≈ 4 caracteres)
   const validChatForCount = chat.filter(c => c.role === 'user' || (c.role === 'ai' && !c.text.includes('Olá!') && !c.text.includes('Modo Stateless')));
   const currentContextText = validChatForCount.map(c => c.text).join(' ');
   
-  // Se for stateless, conta apenas o prompt atual. Se for normal, soma tudo.
   const totalChars = isStateless ? prompt.length : currentContextText.length + prompt.length;
   const estimatedTokens = Math.ceil(totalChars / 4);
-  const isNearLimit = estimatedTokens > (MAX_TOKENS * 0.8); // Fica amarelo/vermelho se passar de 80%
+  const isNearLimit = estimatedTokens > (MAX_TOKENS * 0.8);
 
   return (
     <div {...stylex.props(s.layout)}>
-      <aside {...stylex.props(s.sidebar)}>
+      
+      {/* OVERLAY ESCURO PARA O MOBILE */}
+      {isSidebarOpen && (
+        <div 
+          {...stylex.props(s.overlay)} 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      <aside {...stylex.props(s.sidebar, isSidebarOpen && s.sidebarOpen)}>
         <button {...stylex.props(s.newChatBtn)} onClick={startNewChat}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
@@ -116,7 +126,6 @@ export default function App() {
           Novo chat normal
         </button>
 
-        {/* Botão de fixar o modo Stateless no menu */}
         <button 
           {...stylex.props(s.chatItem, isStateless && s.activeItem)} 
           onClick={startStatelessChat}
@@ -132,7 +141,18 @@ export default function App() {
 
       <main {...stylex.props(s.main)}>
         <header {...stylex.props(s.header)}>
-          Gemma 4 Local UI
+          {/* BOTÃO HAMBURGUER (APARECE SÓ NO MOBILE) */}
+          <button 
+            {...stylex.props(s.menuButton)} 
+            onClick={() => setIsSidebarOpen(true)}
+            title="Abrir menu"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+            </svg>
+          </button>
+          
+          <span>Gemma 4 Local</span>
           {isStateless && <span {...stylex.props(s.badge)}>Stateless</span>}
         </header>
 
@@ -163,11 +183,10 @@ export default function App() {
         <div {...stylex.props(s.inputArea)}>
           <div style={{ width: '100%', maxWidth: '800px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             
-            {/* INDICADOR DE TOKENS E CAPACIDADE */}
             <div {...stylex.props(s.tokenInfo, isNearLimit && s.tokenWarning)}>
-              <span>{isStateless ? 'Contexto: 0 (Stateless)' : 'Enviando histórico completo'}</span>
+              <span>{isStateless ? 'Contexto: 0' : 'Contexto salvo'}</span>
               <span>
-                ~{estimatedTokens.toLocaleString('pt-BR')} / {MAX_TOKENS.toLocaleString('pt-BR')} tokens (Gemma 4)
+                ~{estimatedTokens.toLocaleString('pt-BR')} / {MAX_TOKENS.toLocaleString('pt-BR')} tokens
               </span>
             </div>
 
@@ -177,13 +196,15 @@ export default function App() {
                 rows={1}
                 placeholder={
                   statelessLocked 
-                    ? "Modo Stateless concluído. Inicie um novo chat." 
+                    ? "Modo Stateless concluído." 
                     : "Digite um prompt aqui"
                 }
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 disabled={isInputDisabled}
                 onKeyDown={(e) => {
+                  // No mobile, muitas vezes as pessoas preferem que o 'Enter' quebre a linha.
+                  // Mantendo shift+Enter para linha nova e Enter limpo envia:
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
@@ -211,7 +232,7 @@ export default function App() {
 const s = stylex.create({
   layout: {
     display: 'flex',
-    height: '100svh',
+    height: '100svh', // 100svh é importante para mobile (ignora a barra de endereço)
     width: '100vw',
     backgroundColor: '#131314', 
     color: '#e3e3e3',
@@ -219,9 +240,21 @@ const s = stylex.create({
     overflow: 'hidden',
   },
   
+  // --- MOBILE OVERLAY ---
+  overlay: {
+    display: { default: 'none', [MOBILE]: 'block' },
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    zIndex: 30,
+  },
+
   // --- BARRA LATERAL (SIDEBAR) ---
   sidebar: {
-    width: '280px',
+    width: { default: '280px', [MOBILE]: '260px' },
     backgroundColor: '#1e1f20',
     display: 'flex',
     flexDirection: 'column',
@@ -231,7 +264,20 @@ const s = stylex.create({
     borderRightStyle: 'solid',
     borderRightColor: '#333',
     flexShrink: 0,
+    // Comportamento no Mobile (vire uma gaveta invisível por padrão)
+    position: { default: 'static', [MOBILE]: 'fixed' },
+    top: { [MOBILE]: 0 },
+    bottom: { [MOBILE]: 0 },
+    left: { [MOBILE]: 0 },
+    zIndex: { [MOBILE]: 40 },
+    transform: { default: 'none', [MOBILE]: 'translateX(-100%)' },
+    transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
   },
+  sidebarOpen: {
+    // Quando aberto no mobile
+    transform: { [MOBILE]: 'translateX(0)' },
+  },
+
   newChatBtn: {
     display: 'flex',
     alignItems: 'center',
@@ -281,15 +327,29 @@ const s = stylex.create({
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',
+    width: { [MOBILE]: '100%' }, // Garante que tome a tela toda no mobile
   },
   header: {
-    padding: '16px 24px',
-    fontSize: '22px',
+    padding: { default: '16px 24px', [MOBILE]: '12px 16px' },
+    fontSize: { default: '22px', [MOBILE]: '18px' },
     fontWeight: 500,
     color: '#e3e3e3',
     display: 'flex',
     alignItems: 'center',
-    gap: '12px'
+    gap: '12px',
+    borderBottomWidth: { default: 0, [MOBILE]: '1px' },
+    borderBottomStyle: 'solid',
+    borderBottomColor: '#333',
+  },
+  menuButton: {
+    display: { default: 'none', [MOBILE]: 'flex' },
+    background: 'none',
+    borderWidth: 0,
+    color: '#e3e3e3',
+    cursor: 'pointer',
+    padding: '4px',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   badge: {
     fontSize: '12px',
@@ -304,7 +364,7 @@ const s = stylex.create({
   chatContainer: {
     flexGrow: 1,
     overflowY: 'auto',
-    padding: '24px',
+    padding: { default: '24px', [MOBILE]: '16px' },
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -314,11 +374,11 @@ const s = stylex.create({
     maxWidth: '800px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '24px',
+    gap: { default: '24px', [MOBILE]: '16px' },
   },
   messageRow: {
     display: 'flex',
-    gap: '16px',
+    gap: { default: '16px', [MOBILE]: '10px' },
     alignItems: 'flex-start',
     width: '100%',
   },
@@ -326,15 +386,15 @@ const s = stylex.create({
     flexDirection: 'row-reverse',
   },
   avatar: {
-    width: '36px',
-    height: '36px',
+    width: { default: '36px', [MOBILE]: '30px' },
+    height: { default: '36px', [MOBILE]: '30px' },
     borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
     fontWeight: 'bold',
-    fontSize: '18px',
+    fontSize: { default: '18px', [MOBILE]: '14px' },
   },
   avatarAi: {
     backgroundColor: '#004a77',
@@ -345,11 +405,11 @@ const s = stylex.create({
     color: '#fff',
   },
   messageBubble: {
-    padding: '12px 16px',
+    padding: { default: '12px 16px', [MOBILE]: '10px 14px' },
     borderRadius: '16px',
-    fontSize: '16px',
+    fontSize: { default: '16px', [MOBILE]: '15px' },
     lineHeight: '1.5',
-    maxWidth: '80%',
+    maxWidth: { default: '80%', [MOBILE]: '90%' }, // Estica mais no celular para caber o texto
   },
   bubbleAi: {
     backgroundColor: '#1e1f20',
@@ -364,7 +424,7 @@ const s = stylex.create({
 
   // --- ÁREA DE INPUT ---
   inputArea: {
-    padding: '16px 24px 24px',
+    padding: { default: '16px 24px 24px', [MOBILE]: '12px 16px 16px' },
     display: 'flex',
     justifyContent: 'center',
     backgroundColor: '#131314',
@@ -372,9 +432,9 @@ const s = stylex.create({
   tokenInfo: {
     display: 'flex',
     justifyContent: 'space-between',
-    fontSize: '12px',
+    fontSize: { default: '12px', [MOBILE]: '11px' },
     color: '#a8c7fa',
-    paddingInline: '16px',
+    paddingInline: { default: '16px', [MOBILE]: '8px' },
     opacity: 0.8,
   },
   tokenWarning: {
@@ -388,7 +448,7 @@ const s = stylex.create({
     borderRadius: '24px',
     display: 'flex',
     alignItems: 'flex-end',
-    padding: '12px 16px',
+    padding: { default: '12px 16px', [MOBILE]: '8px 12px' },
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: { default: 'transparent', ':focus-within': '#444746' },
@@ -402,12 +462,13 @@ const s = stylex.create({
     backgroundColor: 'transparent',
     borderWidth: 0,
     color: '#e3e3e3',
-    fontSize: '16px',
+    // IMPORTANTE: Manter 16px no mobile. Fontes menores que 16px fazem o iOS Safari dar zoom automático ao digitar.
+    fontSize: '16px', 
     lineHeight: '1.5',
     resize: 'none',
     outlineWidth: 0,
     padding: '0 8px',
-    maxHeight: '200px',
+    maxHeight: { default: '200px', [MOBILE]: '120px' },
     fontFamily: 'inherit',
   },
   sendButton: {
