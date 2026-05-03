@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import * as stylex from '@stylexjs/stylex';
 
+// Novo limite do Gemma 4 (256K tokens)
+const MAX_TOKENS = 256000; 
+
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -10,14 +13,14 @@ export default function App() {
   const [statelessLocked, setStatelessLocked] = useState(false);
 
   const [chat, setChat] = useState([
-    { role: 'ai', text: 'Olá! Sou seu assistente local. Como posso ajudar?' },
+    { role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' },
   ]);
 
   const startNewChat = () => {
     setIsStateless(false);
     setStatelessLocked(false);
     setPrompt('');
-    setChat([{ role: 'ai', text: 'Olá! Sou seu assistente local. Como posso ajudar?' }]);
+    setChat([{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }]);
   };
 
   const startStatelessChat = () => {
@@ -33,10 +36,28 @@ export default function App() {
     const userText = prompt;
     setPrompt(''); 
     
+    // Atualiza a interface com a mensagem do usuário
     setChat((prev) => [...prev, { role: 'user', text: userText }]);
     setIsLoading(true);
 
     try {
+      // Filtra mensagens de introdução inúteis para não gastar tokens
+      const validHistory = chat.filter(
+        c => c.role === 'user' || (c.role === 'ai' && !c.text.includes('Olá! Sou seu') && !c.text.includes('Modo Stateless'))
+      );
+
+      // Formata o histórico como uma string única, ou deixa vazio se for stateless
+      let finalPrompt = userText;
+      
+      if (!isStateless && validHistory.length > 0) {
+        const historyText = validHistory
+          .map((msg) => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`)
+          .join('\n');
+        
+        // Concatena o histórico com a pergunta atual
+        finalPrompt = `${historyText}\nUser: ${userText}\nAI:`;
+      }
+
       const response = await fetch('http://localhost:3000/ollama/generate', {
         method: 'POST',
         headers: {
@@ -44,7 +65,8 @@ export default function App() {
         },
         body: JSON.stringify({
           model: 'gemma4',
-          prompt: userText,
+          prompt: finalPrompt,
+          history: isStateless ? [] : validHistory 
         }),
       });
 
@@ -73,8 +95,16 @@ export default function App() {
     }
   };
 
-  // Trava o input se estiver carregando OU se a conversa stateless já foi concluída
   const isInputDisabled = isLoading || statelessLocked;
+
+  // LÓGICA DO CONTADOR DE TOKENS (Estimativa 1 token ≈ 4 caracteres)
+  const validChatForCount = chat.filter(c => c.role === 'user' || (c.role === 'ai' && !c.text.includes('Olá!') && !c.text.includes('Modo Stateless')));
+  const currentContextText = validChatForCount.map(c => c.text).join(' ');
+  
+  // Se for stateless, conta apenas o prompt atual. Se for normal, soma tudo.
+  const totalChars = isStateless ? prompt.length : currentContextText.length + prompt.length;
+  const estimatedTokens = Math.ceil(totalChars / 4);
+  const isNearLimit = estimatedTokens > (MAX_TOKENS * 0.8); // Fica amarelo/vermelho se passar de 80%
 
   return (
     <div {...stylex.props(s.layout)}>
@@ -102,7 +132,7 @@ export default function App() {
 
       <main {...stylex.props(s.main)}>
         <header {...stylex.props(s.header)}>
-          Gemini Clone (NestJS)
+          Gemma 4 Local UI
           {isStateless && <span {...stylex.props(s.badge)}>Stateless</span>}
         </header>
 
@@ -131,35 +161,46 @@ export default function App() {
         </div>
 
         <div {...stylex.props(s.inputArea)}>
-          <div {...stylex.props(s.inputWrapper, isInputDisabled && s.inputWrapperDisabled)}>
-            <textarea
-              {...stylex.props(s.textarea)}
-              rows={1}
-              placeholder={
-                statelessLocked 
-                  ? "Modo Stateless concluído. Inicie um novo chat." 
-                  : "Digite um prompt aqui"
-              }
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              disabled={isInputDisabled}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
+          <div style={{ width: '100%', maxWidth: '800px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            
+            {/* INDICADOR DE TOKENS E CAPACIDADE */}
+            <div {...stylex.props(s.tokenInfo, isNearLimit && s.tokenWarning)}>
+              <span>{isStateless ? 'Contexto: 0 (Stateless)' : 'Enviando histórico completo'}</span>
+              <span>
+                ~{estimatedTokens.toLocaleString('pt-BR')} / {MAX_TOKENS.toLocaleString('pt-BR')} tokens (Gemma 4)
+              </span>
+            </div>
+
+            <div {...stylex.props(s.inputWrapper, isInputDisabled && s.inputWrapperDisabled)}>
+              <textarea
+                {...stylex.props(s.textarea)}
+                rows={1}
+                placeholder={
+                  statelessLocked 
+                    ? "Modo Stateless concluído. Inicie um novo chat." 
+                    : "Digite um prompt aqui"
                 }
-              }}
-            />
-            <button 
-              {...stylex.props(s.sendButton, isInputDisabled && s.sendButtonDisabled)} 
-              onClick={handleSend} 
-              disabled={isInputDisabled}
-              title="Enviar"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-              </svg>
-            </button>
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                disabled={isInputDisabled}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+              />
+              <button 
+                {...stylex.props(s.sendButton, isInputDisabled && s.sendButtonDisabled)} 
+                onClick={handleSend} 
+                disabled={isInputDisabled}
+                title="Enviar"
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </main>
@@ -328,9 +369,21 @@ const s = stylex.create({
     justifyContent: 'center',
     backgroundColor: '#131314',
   },
+  tokenInfo: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '12px',
+    color: '#a8c7fa',
+    paddingInline: '16px',
+    opacity: 0.8,
+  },
+  tokenWarning: {
+    color: '#f28b82',
+    opacity: 1,
+    fontWeight: 'bold',
+  },
   inputWrapper: {
     width: '100%',
-    maxWidth: '800px',
     backgroundColor: '#1e1f20',
     borderRadius: '24px',
     display: 'flex',
