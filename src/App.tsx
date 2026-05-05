@@ -1,20 +1,18 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import * as stylex from '@stylexjs/stylex';
 
 // Limite do Gemma 4
 const MAX_TOKENS = 256000; 
 
-// Variável de breakpoint para mobile
 const MOBILE = '@media (max-width: 768px)';
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   
-  // Controle de layout mobile
+  const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  // Estados Stateless
   const [isStateless, setIsStateless] = useState(false);
   const [statelessLocked, setStatelessLocked] = useState(false);
 
@@ -27,7 +25,7 @@ export default function App() {
     setStatelessLocked(false);
     setPrompt('');
     setChat([{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }]);
-    setIsSidebarOpen(false); // Fecha o menu no mobile ao escolher
+    setIsSidebarOpen(false);
   };
 
   const startStatelessChat = () => {
@@ -35,11 +33,11 @@ export default function App() {
     setStatelessLocked(false);
     setPrompt('');
     setChat([{ role: 'ai', text: 'Modo Stateless ativo ⚡\nFaça uma pergunta única. O contexto não será salvo para a próxima interação.' }]);
-    setIsSidebarOpen(false); // Fecha o menu no mobile ao escolher
+    setIsSidebarOpen(false);
   };
 
   const handleSend = async () => {
-    if (!prompt.trim() || isLoading || statelessLocked) return;
+    if (!prompt.trim() || isLoading || isStreaming || statelessLocked) return;
 
     const userText = prompt;
     setPrompt(''); 
@@ -62,29 +60,101 @@ export default function App() {
         finalPrompt = `${historyText}\nUser: ${userText}\nAI:`;
       }
 
-      const response = await fetch('http://localhost:3000/ollama/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gemma4',
-          prompt: finalPrompt,
-          history: isStateless ? [] : validHistory 
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Erro na API: ${response.statusText}`);
-      }
-
-      const responseJson = await response.json();
-      const aiResponseText = responseJson.data?.response || responseJson.response || "Resposta recebida";
-
-      setChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
-
+      // ==== MODO STATELESS ====
       if (isStateless) {
+        const response = await fetch('http://localhost:3000/ollama/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gemma4',
+            prompt: finalPrompt,
+            history: [] 
+          }),
+        });
+
+        if (!response.ok) throw new Error(`Erro na API: ${response.statusText}`);
+
+        const responseJson = await response.json();
+        const aiResponseText = responseJson.data?.response || responseJson.response || "Resposta recebida";
+
+        setChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
         setStatelessLocked(true);
+      } 
+      
+      // ==== MODO STREAMING (NORMAL) ====
+      else {
+        const response = await fetch('http://localhost:3000/ollama/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gemma4',
+            prompt: finalPrompt,
+            history: validHistory 
+          }),
+        });
+
+        if (!response.ok) throw new Error(`Erro na API: ${response.statusText}`);
+        if (!response.body) throw new Error('A resposta não possui ReadableStream.');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let isFirstChunk = true;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; 
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+
+            // Ignora linhas vazias ou metadados de SSE como "id: 1" ou "event: message"
+            if (!trimmedLine || trimmedLine.startsWith('id:') || trimmedLine.startsWith('event:')) {
+              continue;
+            }
+
+            // Captura apenas o que vem depois de "data: "
+            if (trimmedLine.startsWith('data:')) {
+              // Remove o prefixo "data:" e limpa espaços
+              const jsonString = trimmedLine.replace(/^data:/, '').trim();
+
+              if (jsonString === '[DONE]') continue; // Tratamento de fechamento comum em SSE
+
+              try {
+                const parsed = JSON.parse(jsonString);
+                
+                // Baseado no seu log, o texto vem em parsed.data
+                const textChunk = parsed.data ?? parsed.response ?? parsed.message?.content ?? '';
+
+                if (textChunk) {
+                  if (isFirstChunk) {
+                    setIsLoading(false);
+                    setIsStreaming(true);
+                    setChat((prev) => [...prev, { role: 'ai', text: textChunk }]);
+                    isFirstChunk = false;
+                  } else {
+                    setChat((prev) => {
+                      const newChat = [...prev];
+                      const lastIndex = newChat.length - 1;
+                      newChat[lastIndex] = {
+                        ...newChat[lastIndex],
+                        text: newChat[lastIndex].text + textChunk
+                      };
+                      return newChat;
+                    });
+                  }
+                }
+              } catch (e) {
+                // Se der erro no parse de um chunk, ignora silenciosamente para não sujar a tela
+                console.warn("Ignorando chunk inválido:", jsonString);
+              }
+            }
+          }
+        }
       }
 
     } catch (error) {
@@ -95,10 +165,11 @@ export default function App() {
       ]);
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
     }
   };
 
-  const isInputDisabled = isLoading || statelessLocked;
+  const isInputDisabled = isLoading || isStreaming || statelessLocked;
 
   const validChatForCount = chat.filter(c => c.role === 'user' || (c.role === 'ai' && !c.text.includes('Olá!') && !c.text.includes('Modo Stateless')));
   const currentContextText = validChatForCount.map(c => c.text).join(' ');
@@ -110,7 +181,6 @@ export default function App() {
   return (
     <div {...stylex.props(s.layout)}>
       
-      {/* OVERLAY ESCURO PARA O MOBILE */}
       {isSidebarOpen && (
         <div 
           {...stylex.props(s.overlay)} 
@@ -141,7 +211,6 @@ export default function App() {
 
       <main {...stylex.props(s.main)}>
         <header {...stylex.props(s.header)}>
-          {/* BOTÃO HAMBURGUER (APARECE SÓ NO MOBILE) */}
           <button 
             {...stylex.props(s.menuButton)} 
             onClick={() => setIsSidebarOpen(true)}
@@ -203,8 +272,6 @@ export default function App() {
                 onChange={(e) => setPrompt(e.target.value)}
                 disabled={isInputDisabled}
                 onKeyDown={(e) => {
-                  // No mobile, muitas vezes as pessoas preferem que o 'Enter' quebre a linha.
-                  // Mantendo shift+Enter para linha nova e Enter limpo envia:
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
@@ -232,7 +299,7 @@ export default function App() {
 const s = stylex.create({
   layout: {
     display: 'flex',
-    height: '100svh', // 100svh é importante para mobile (ignora a barra de endereço)
+    height: '100svh', 
     width: '100vw',
     backgroundColor: '#131314', 
     color: '#e3e3e3',
@@ -240,7 +307,6 @@ const s = stylex.create({
     overflow: 'hidden',
   },
   
-  // --- MOBILE OVERLAY ---
   overlay: {
     display: { default: 'none', [MOBILE]: 'block' },
     position: 'fixed',
@@ -252,7 +318,6 @@ const s = stylex.create({
     zIndex: 30,
   },
 
-  // --- BARRA LATERAL (SIDEBAR) ---
   sidebar: {
     width: { default: '280px', [MOBILE]: '260px' },
     backgroundColor: '#1e1f20',
@@ -264,7 +329,6 @@ const s = stylex.create({
     borderRightStyle: 'solid',
     borderRightColor: '#333',
     flexShrink: 0,
-    // Comportamento no Mobile (vire uma gaveta invisível por padrão)
     position: { default: 'static', [MOBILE]: 'fixed' },
     top: { [MOBILE]: 0 },
     bottom: { [MOBILE]: 0 },
@@ -274,7 +338,6 @@ const s = stylex.create({
     transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
   },
   sidebarOpen: {
-    // Quando aberto no mobile
     transform: { [MOBILE]: 'translateX(0)' },
   },
 
@@ -321,13 +384,12 @@ const s = stylex.create({
     color: '#c2e7ff',
   },
 
-  // --- ÁREA PRINCIPAL ---
   main: {
     flexGrow: 1,
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',
-    width: { [MOBILE]: '100%' }, // Garante que tome a tela toda no mobile
+    width: { [MOBILE]: '100%' }, 
   },
   header: {
     padding: { default: '16px 24px', [MOBILE]: '12px 16px' },
@@ -360,7 +422,6 @@ const s = stylex.create({
     fontWeight: 'bold',
   },
   
-  // --- HISTÓRICO DA CONVERSA ---
   chatContainer: {
     flexGrow: 1,
     overflowY: 'auto',
@@ -409,7 +470,7 @@ const s = stylex.create({
     borderRadius: '16px',
     fontSize: { default: '16px', [MOBILE]: '15px' },
     lineHeight: '1.5',
-    maxWidth: { default: '80%', [MOBILE]: '90%' }, // Estica mais no celular para caber o texto
+    maxWidth: { default: '80%', [MOBILE]: '90%' }, 
   },
   bubbleAi: {
     backgroundColor: '#1e1f20',
@@ -422,7 +483,6 @@ const s = stylex.create({
     borderTopRightRadius: '4px',
   },
 
-  // --- ÁREA DE INPUT ---
   inputArea: {
     padding: { default: '16px 24px 24px', [MOBILE]: '12px 16px 16px' },
     display: 'flex',
@@ -462,7 +522,6 @@ const s = stylex.create({
     backgroundColor: 'transparent',
     borderWidth: 0,
     color: '#e3e3e3',
-    // IMPORTANTE: Manter 16px no mobile. Fontes menores que 16px fazem o iOS Safari dar zoom automático ao digitar.
     fontSize: '16px', 
     lineHeight: '1.5',
     resize: 'none',
