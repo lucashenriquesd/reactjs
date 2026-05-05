@@ -2,12 +2,30 @@ import { useState, useRef, useEffect } from 'react';
 import * as stylex from '@stylexjs/stylex';
 import { getApiBaseUrl } from './config/api';
 
+// ==== GERADOR DE UUIDv7 NATIVO ====
+const generateUUIDv7 = () => {
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  const ts = Date.now();
+  bytes[0] = Math.floor(ts / 2 ** 40) & 0xff;
+  bytes[1] = Math.floor(ts / 2 ** 32) & 0xff;
+  bytes[2] = Math.floor(ts / 2 ** 24) & 0xff;
+  bytes[3] = Math.floor(ts / 2 ** 16) & 0xff;
+  bytes[4] = Math.floor(ts / 2 ** 8) & 0xff;
+  bytes[5] = ts & 0xff;
+  bytes[6] = (bytes[6] & 0x0f) | 0x70; // Version 7
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 10
+  const hex = [...bytes].map(b => b.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+};
+
 // Limite do Gemma 4
 const MAX_TOKENS = 256000; 
-
 const MOBILE = '@media (max-width: 768px)';
-
 const apiUrl = `${getApiBaseUrl()}`;
+
+type Message = { role: string; text: string };
+type ChatSession = { id: string; title: string; messages: Message[]; updatedAt: number };
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
@@ -16,49 +34,132 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isStateless, setIsStateless] = useState(false);
-  const [statelessLocked, setStatelessLocked] = useState(false);
-  
-  // Novo estado para controlar a Rolagem Automática
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const [chat, setChat] = useState([
-    { role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' },
-  ]);
+  // Estados Stateless (Efêmeros)
+  const [isStateless, setIsStateless] = useState(false);
+  const [statelessLocked, setStatelessLocked] = useState(false);
+  const [statelessChat, setStatelessChat] = useState<Message[]>([]);
+
+  // ==== GERENCIAMENTO DE SESSÕES (LOCALSTORAGE) ====
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const saved = localStorage.getItem('gemma-chats');
+    if (saved) return JSON.parse(saved);
+    
+    // Se não houver histórico, cria a primeira conversa
+    const initId = generateUUIDv7();
+    return [{
+      id: initId,
+      title: 'Nova Conversa',
+      messages: [{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }],
+      updatedAt: Date.now()
+    }];
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(sessions[0]?.id || null);
+
+  // Salva no LocalStorage sempre que 'sessions' for atualizado
+  useEffect(() => {
+    localStorage.setItem('gemma-chats', JSON.stringify(sessions));
+  }, [sessions]);
+
+  // Deriva o chat atual para renderização baseada no modo escolhido
+  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const chat = isStateless ? statelessChat : (activeSession?.messages || []);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Efeito atualizado para respeitar a escolha do usuário
+  // Auto-scroll da tela
   useEffect(() => {
     if (autoScroll) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
     }
   }, [chat, isLoading, autoScroll]);
 
+  // ==== AÇÕES DO MENU ====
   const startNewChat = () => {
+    const newId = generateUUIDv7();
+    setSessions(prev => [{
+      id: newId,
+      title: 'Nova Conversa',
+      messages: [{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }],
+      updatedAt: Date.now()
+    }, ...prev]);
+    
+    setActiveSessionId(newId);
     setIsStateless(false);
     setStatelessLocked(false);
     setPrompt('');
-    setChat([{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }]);
     setIsSidebarOpen(false);
+  };
+
+  const loadChat = (id: string) => {
+    setActiveSessionId(id);
+    setIsStateless(false);
+    setStatelessLocked(false);
+    setPrompt('');
+    setIsSidebarOpen(false);
+  };
+
+  const deleteChat = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); // Impede de selecionar a conversa ao clicar na lixeira
+    setSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      
+      // Se apagou a conversa atual e está no modo normal, muda para a próxima disponível
+      if (!isStateless && activeSessionId === id) {
+        if (filtered.length > 0) {
+          setActiveSessionId(filtered[0].id);
+        } else {
+          // Se apagou tudo, cria uma nova limpa
+          const newId = generateUUIDv7();
+          filtered.push({
+            id: newId,
+            title: 'Nova Conversa',
+            messages: [{ role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' }],
+            updatedAt: Date.now()
+          });
+          setActiveSessionId(newId);
+        }
+      }
+      return filtered;
+    });
   };
 
   const startStatelessChat = () => {
     setIsStateless(true);
     setStatelessLocked(false);
     setPrompt('');
-    setChat([{ role: 'ai', text: 'Modo Stateless ativo ⚡\nFaça uma pergunta única. O contexto não será salvo para a próxima interação.' }]);
+    setStatelessChat([{ role: 'ai', text: 'Modo Stateless ativo ⚡\nFaça uma pergunta única. O contexto não será salvo para a próxima interação.' }]);
     setIsSidebarOpen(false);
   };
 
+  // ==== ENVIO DE MENSAGENS ====
   const handleSend = async () => {
     if (!prompt.trim() || isLoading || isStreaming || statelessLocked) return;
 
     const userText = prompt;
     setPrompt(''); 
-    
-    setChat((prev) => [...prev, { role: 'user', text: userText }]);
     setIsLoading(true);
+
+    // Salva a mensagem do usuário imediatamente
+    if (isStateless) {
+      setStatelessChat((prev) => [...prev, { role: 'user', text: userText }]);
+    } else {
+      setSessions(prev => prev.map(s => {
+        if (s.id === activeSessionId) {
+          const isFirstUserMsg = s.messages.filter(m => m.role === 'user').length === 0;
+          return {
+            ...s,
+            // Atualiza o título da conversa baseado na primeira mensagem
+            title: isFirstUserMsg ? userText.slice(0, 30) + (userText.length > 30 ? '...' : '') : s.title,
+            messages: [...s.messages, { role: 'user', text: userText }],
+            updatedAt: Date.now()
+          };
+        }
+        return s;
+      }));
+    }
 
     try {
       const validHistory = chat.filter(
@@ -66,24 +167,17 @@ export default function App() {
       );
 
       let finalPrompt = userText;
-      
       if (!isStateless && validHistory.length > 0) {
-        const historyText = validHistory
-          .map((msg) => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`)
-          .join('\n');
-        
+        const historyText = validHistory.map((msg) => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`).join('\n');
         finalPrompt = `${historyText}\nUser: ${userText}\nAI:`;
       }
 
+      // ==== MODO STATELESS (Sem Stream) ====
       if (isStateless) {
         const response = await fetch(`${apiUrl}/ollama/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'gemma4',
-            prompt: finalPrompt,
-            history: [] 
-          }),
+          body: JSON.stringify({ model: 'gemma4', prompt: finalPrompt, history: [] }),
         });
 
         if (!response.ok) throw new Error(`Erro na API: ${response.statusText}`);
@@ -91,19 +185,16 @@ export default function App() {
         const responseJson = await response.json();
         const aiResponseText = responseJson.data?.response || responseJson.response || "Resposta recebida";
 
-        setChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
+        setStatelessChat((prev) => [...prev, { role: 'ai', text: aiResponseText }]);
         setStatelessLocked(true);
       } 
       
+      // ==== MODO NORMAL (Com Stream e Persistência) ====
       else {
         const response = await fetch(`${apiUrl}/ollama/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'gemma4',
-            prompt: finalPrompt,
-            history: validHistory 
-          }),
+          body: JSON.stringify({ model: 'gemma4', prompt: finalPrompt, history: validHistory }),
         });
 
         if (!response.ok) throw new Error(`Erro na API: ${response.statusText}`);
@@ -125,13 +216,10 @@ export default function App() {
           for (const line of lines) {
             const trimmedLine = line.trim();
 
-            if (!trimmedLine || trimmedLine.startsWith('id:') || trimmedLine.startsWith('event:')) {
-              continue;
-            }
+            if (!trimmedLine || trimmedLine.startsWith('id:') || trimmedLine.startsWith('event:')) continue;
 
             if (trimmedLine.startsWith('data:')) {
               const jsonString = trimmedLine.replace(/^data:/, '').trim();
-
               if (jsonString === '[DONE]') continue; 
 
               try {
@@ -142,18 +230,28 @@ export default function App() {
                   if (isFirstChunk) {
                     setIsLoading(false);
                     setIsStreaming(true);
-                    setChat((prev) => [...prev, { role: 'ai', text: textChunk }]);
+                    
+                    // Adiciona o primeiro pedaço de texto da IA
+                    setSessions(prev => prev.map(s => s.id === activeSessionId ? {
+                      ...s,
+                      messages: [...s.messages, { role: 'ai', text: textChunk }],
+                      updatedAt: Date.now()
+                    } : s));
+                    
                     isFirstChunk = false;
                   } else {
-                    setChat((prev) => {
-                      const newChat = [...prev];
-                      const lastIndex = newChat.length - 1;
-                      newChat[lastIndex] = {
-                        ...newChat[lastIndex],
-                        text: newChat[lastIndex].text + textChunk
-                      };
-                      return newChat;
-                    });
+                    // Concatena os pedaços seguintes
+                    setSessions(prev => prev.map(s => {
+                      if (s.id === activeSessionId) {
+                        const newMsgs = [...s.messages];
+                        newMsgs[newMsgs.length - 1] = {
+                          ...newMsgs[newMsgs.length - 1],
+                          text: newMsgs[newMsgs.length - 1].text + textChunk
+                        };
+                        return { ...s, messages: newMsgs, updatedAt: Date.now() };
+                      }
+                      return s;
+                    }));
                   }
                 }
               } catch (e) {
@@ -163,13 +261,15 @@ export default function App() {
           }
         }
       }
-
     } catch (error) {
       console.error('Erro ao chamar o NestJS:', error);
-      setChat((prev) => [
-        ...prev, 
-        { role: 'ai', text: 'Desculpe, ocorreu um erro ao se comunicar com o servidor local.' }
-      ]);
+      const errorMsg = { role: 'ai', text: 'Desculpe, ocorreu um erro ao se comunicar com o servidor local.' };
+      
+      if (isStateless) {
+        setStatelessChat(prev => [...prev, errorMsg]);
+      } else {
+        setSessions(prev => prev.map(s => s.id === activeSessionId ? { ...s, messages: [...s.messages, errorMsg] } : s));
+      }
     } finally {
       setIsLoading(false);
       setIsStreaming(false);
@@ -184,6 +284,9 @@ export default function App() {
   const totalChars = isStateless ? prompt.length : currentContextText.length + prompt.length;
   const estimatedTokens = Math.ceil(totalChars / 4);
   const isNearLimit = estimatedTokens > (MAX_TOKENS * 0.8);
+
+  // Ordena conversas por última atualização
+  const sortedSessions = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
 
   return (
     <div {...stylex.props(s.layout)}>
@@ -204,16 +307,39 @@ export default function App() {
         </button>
 
         <button 
-          {...stylex.props(s.chatItem, isStateless && s.activeItem)} 
+          {...stylex.props(s.chatItemWrapper, s.statelessItemBtn, isStateless && s.activeItem)} 
           onClick={startStatelessChat}
-          style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}
         >
           <span style={{ fontSize: '18px' }}>⚡</span>
           Modo Stateless
         </button>
         
         <div {...stylex.props(s.historyTitle)}>Recentes</div>
-        <button {...stylex.props(s.chatItem)}>Exemplo de histórico...</button>
+        
+        {/* LISTA DE CONVERSAS */}
+        <div {...stylex.props(s.historyList)}>
+          {sortedSessions.map((session) => (
+            <div key={session.id} {...stylex.props(s.chatItemWrapper, !isStateless && activeSessionId === session.id && s.activeItem)}>
+              <button 
+                {...stylex.props(s.chatItemBtn)} 
+                onClick={() => loadChat(session.id)}
+                title={session.title}
+              >
+                {session.title}
+              </button>
+              
+              <button 
+                {...stylex.props(s.deleteBtn)} 
+                onClick={(e) => deleteChat(e, session.id)}
+                title="Apagar conversa"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
       </aside>
 
       <main {...stylex.props(s.main)}>
@@ -233,7 +359,6 @@ export default function App() {
             {isStateless && <span {...stylex.props(s.badge)}>Stateless</span>}
           </div>
 
-          {/* NOVO BOTÃO DE ROLAGEM AUTOMÁTICA */}
           <button 
             {...stylex.props(s.scrollToggleBtn, autoScroll && s.scrollToggleActive)} 
             onClick={() => setAutoScroll(!autoScroll)}
@@ -377,7 +502,7 @@ const s = stylex.create({
     padding: '12px 16px',
     color: '#e3e3e3',
     borderWidth: 0,
-    borderRadius: '24px',
+    borderRadius: '24px', // Formato de pílula
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: 500,
@@ -393,25 +518,78 @@ const s = stylex.create({
     fontWeight: 500,
     color: '#c4c7c5',
     marginBottom: '12px',
-    paddingInline: '12px',
+    paddingInline: '16px', // Alinhado com o botão
   },
-  chatItem: {
-    padding: '12px',
-    borderRadius: '8px',
+  
+  // ÁREA DE LISTA DE HISTÓRICO COM SCROLL
+  historyList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px', // Mais juntos, estilo Gemini
+    overflowY: 'auto',
+    flexGrow: 1,
+    // Esconder barra de rolagem (opcional, deixa mais limpo)
+    scrollbarWidth: 'none', 
+    '::-webkit-scrollbar': { display: 'none' }
+  },
+
+  // ==== NOVO ESTILO DOS ITENS DO MENU ====
+  chatItemWrapper: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    borderRadius: '24px',
+    backgroundColor: { default: 'transparent', ':hover': '#004a77' }, 
+    color: { default: '#e3e3e3', ':hover': '#c2e7ff' }, 
+    transition: 'background-color 0.2s, color 0.2s',
+    overflow: 'hidden',
+  },
+  statelessItemBtn: {
+    marginBottom: '24px',
+    padding: '12px 16px',
+    cursor: 'pointer',
+    backgroundColor: 'transparent', // <-- CORREÇÃO AQUI (Força o fundo ficar invisível)
+    borderWidth: 0,
+    color: 'inherit',
+    justifyContent: 'flex-start',
+    gap: '8px',
+  },
+  chatItemBtn: {
+    padding: '12px 16px', 
+    paddingRight: '40px', 
+    backgroundColor: 'transparent', // <-- CORREÇÃO AQUI
+    borderWidth: 0,
+    color: 'inherit',
     cursor: 'pointer',
     fontSize: '14px',
+    textAlign: 'left',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    backgroundColor: { default: 'transparent', ':hover': '#333538' },
-    color: '#e3e3e3',
+    flexGrow: 1,
+  },
+  deleteBtn: {
+    position: 'absolute',
+    right: '6px', 
     borderWidth: 0,
-    textAlign: 'left',
+    cursor: 'pointer',
+    padding: '6px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%', 
+    color: { 
+      default: '#a8c7fa', 
+      ':hover': '#f28b82' 
+    },
+    backgroundColor: { default: 'transparent', ':hover': 'rgba(255,255,255,0.1)' }, // <-- CORREÇÃO AQUI
+    transition: 'color 0.2s, background-color 0.2s',
   },
   activeItem: {
-    backgroundColor: '#333538',
+    backgroundColor: '#004a77', 
     color: '#c2e7ff',
   },
+  // ========================================
 
   main: {
     flexGrow: 1,
@@ -428,13 +606,12 @@ const s = stylex.create({
     color: '#e3e3e3',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between', // Separa o título do botão de rolagem
+    justifyContent: 'space-between', 
     borderBottomWidth: { default: 0, [MOBILE]: '1px' },
     borderBottomStyle: 'solid',
     borderBottomColor: '#333',
   },
   
-  // Botões genéricos com ícone
   iconBtn: {
     background: 'none',
     borderWidth: 0,
@@ -578,11 +755,11 @@ const s = stylex.create({
   },
   inputWrapper: {
     width: '100%',
-    boxSizing: 'border-box', // Garante que bordas/paddings não excedam 100%
+    boxSizing: 'border-box', 
     backgroundColor: '#1e1f20',
     borderRadius: '24px',
     display: 'flex',
-    alignItems: 'center', // Centraliza verticalmente o textarea e o botão
+    alignItems: 'center', 
     padding: { default: '8px 16px', [MOBILE]: '6px 12px' },
     borderWidth: '1px',
     borderStyle: 'solid',
@@ -601,7 +778,7 @@ const s = stylex.create({
     lineHeight: '1.5',
     resize: 'none',
     outlineWidth: 0,
-    padding: '8px', // Adicionado padding vertical para centralizar o placeholder
+    padding: '8px', 
     margin: 0,
     maxHeight: { default: '200px', [MOBILE]: '120px' },
     fontFamily: 'inherit',
