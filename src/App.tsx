@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import * as stylex from '@stylexjs/stylex';
+import { getApiBaseUrl } from './config/api';
 
 // Limite do Gemma 4
 const MAX_TOKENS = 256000; 
 
 const MOBILE = '@media (max-width: 768px)';
+
+const apiUrl = `${getApiBaseUrl()}`;
 
 export default function App() {
   const [prompt, setPrompt] = useState('');
@@ -62,7 +65,7 @@ export default function App() {
 
       // ==== MODO STATELESS ====
       if (isStateless) {
-        const response = await fetch('http://localhost:3000/ollama/generate', {
+        const response = await fetch(`${apiUrl}/ollama/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -83,7 +86,7 @@ export default function App() {
       
       // ==== MODO STREAMING (NORMAL) ====
       else {
-        const response = await fetch('http://localhost:3000/ollama/stream', {
+        const response = await fetch(`${apiUrl}/ollama/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
