@@ -18,18 +18,22 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isStateless, setIsStateless] = useState(false);
   const [statelessLocked, setStatelessLocked] = useState(false);
+  
+  // Novo estado para controlar a Rolagem Automática
+  const [autoScroll, setAutoScroll] = useState(true);
 
   const [chat, setChat] = useState([
     { role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' },
   ]);
 
-  // Referência para o final do chat
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Efeito para rolar a tela sempre que o chat ou o loading mudarem
+  // Efeito atualizado para respeitar a escolha do usuário
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
-  }, [chat, isLoading]);
+    if (autoScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+  }, [chat, isLoading, autoScroll]);
 
   const startNewChat = () => {
     setIsStateless(false);
@@ -71,7 +75,6 @@ export default function App() {
         finalPrompt = `${historyText}\nUser: ${userText}\nAI:`;
       }
 
-      // ==== MODO STATELESS ====
       if (isStateless) {
         const response = await fetch(`${apiUrl}/ollama/generate`, {
           method: 'POST',
@@ -92,7 +95,6 @@ export default function App() {
         setStatelessLocked(true);
       } 
       
-      // ==== MODO STREAMING (NORMAL) ====
       else {
         const response = await fetch(`${apiUrl}/ollama/stream`, {
           method: 'POST',
@@ -134,7 +136,6 @@ export default function App() {
 
               try {
                 const parsed = JSON.parse(jsonString);
-                
                 const textChunk = parsed.data ?? parsed.response ?? parsed.message?.content ?? '';
 
                 if (textChunk) {
@@ -217,18 +218,38 @@ export default function App() {
 
       <main {...stylex.props(s.main)}>
         <header {...stylex.props(s.header)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button 
+              {...stylex.props(s.iconBtn, s.mobileOnly)} 
+              onClick={() => setIsSidebarOpen(true)}
+              title="Abrir menu"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+              </svg>
+            </button>
+            
+            <span>Gemma 4 Local</span>
+            {isStateless && <span {...stylex.props(s.badge)}>Stateless</span>}
+          </div>
+
+          {/* NOVO BOTÃO DE ROLAGEM AUTOMÁTICA */}
           <button 
-            {...stylex.props(s.menuButton)} 
-            onClick={() => setIsSidebarOpen(true)}
-            title="Abrir menu"
+            {...stylex.props(s.scrollToggleBtn, autoScroll && s.scrollToggleActive)} 
+            onClick={() => setAutoScroll(!autoScroll)}
+            title={autoScroll ? "Desativar Rolagem Automática" : "Ativar Rolagem Automática"}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
-            </svg>
+            {autoScroll ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" opacity="0.5">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+              </svg>
+            )}
+            <span {...stylex.props(s.hideOnMobile)}>Auto Scroll</span>
           </button>
-          
-          <span>Gemma 4 Local</span>
-          {isStateless && <span {...stylex.props(s.badge)}>Stateless</span>}
         </header>
 
         <div {...stylex.props(s.chatContainer)}>
@@ -253,7 +274,6 @@ export default function App() {
               </div>
             )}
             
-            {/* Elemento âncora para forçar o scroll para o final */}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -288,7 +308,7 @@ export default function App() {
                 }}
               />
               <button 
-                {...stylex.props(s.sendButton, isInputDisabled && s.sendButtonDisabled)} 
+                {...stylex.props(s.iconBtn, s.sendBtnColor, isInputDisabled && s.iconBtnDisabled)} 
                 onClick={handleSend} 
                 disabled={isInputDisabled}
                 title="Enviar"
@@ -399,6 +419,7 @@ const s = stylex.create({
     flexDirection: 'column',
     position: 'relative',
     width: { [MOBILE]: '100%' }, 
+    boxSizing: 'border-box',
   },
   header: {
     padding: { default: '16px 24px', [MOBILE]: '12px 16px' },
@@ -407,21 +428,62 @@ const s = stylex.create({
     color: '#e3e3e3',
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
+    justifyContent: 'space-between', // Separa o título do botão de rolagem
     borderBottomWidth: { default: 0, [MOBILE]: '1px' },
     borderBottomStyle: 'solid',
     borderBottomColor: '#333',
   },
-  menuButton: {
-    display: { default: 'none', [MOBILE]: 'flex' },
+  
+  // Botões genéricos com ícone
+  iconBtn: {
     background: 'none',
     borderWidth: 0,
     color: '#e3e3e3',
     cursor: 'pointer',
-    padding: '4px',
+    padding: '8px',
+    borderRadius: '50%',
+    display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: { default: 'transparent', ':hover': '#333538' },
+    transition: 'background-color 0.2s',
   },
+  mobileOnly: {
+    display: { default: 'none', [MOBILE]: 'flex' },
+  },
+  sendBtnColor: {
+    color: '#c2e7ff',
+  },
+  iconBtnDisabled: {
+    color: '#555',
+    cursor: 'not-allowed',
+    backgroundColor: 'transparent',
+  },
+
+  scrollToggleBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 12px',
+    borderRadius: '16px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: '#333',
+    backgroundColor: 'transparent',
+    color: '#a8c7fa',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 600,
+    transition: 'all 0.2s',
+  },
+  scrollToggleActive: {
+    backgroundColor: 'rgba(168, 199, 250, 0.1)',
+    borderColor: '#a8c7fa',
+  },
+  hideOnMobile: {
+    display: { default: 'block', [MOBILE]: 'none' },
+  },
+
   badge: {
     fontSize: '12px',
     backgroundColor: '#004a77',
@@ -438,7 +500,6 @@ const s = stylex.create({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    // Adiciona scroll suave para melhorar a UX caso não esteja stremando rápido
     scrollBehavior: 'smooth',
   },
   chatWrapper: {
@@ -499,6 +560,8 @@ const s = stylex.create({
     display: 'flex',
     justifyContent: 'center',
     backgroundColor: '#131314',
+    width: '100%',
+    boxSizing: 'border-box',
   },
   tokenInfo: {
     display: 'flex',
@@ -515,11 +578,12 @@ const s = stylex.create({
   },
   inputWrapper: {
     width: '100%',
+    boxSizing: 'border-box', // Garante que bordas/paddings não excedam 100%
     backgroundColor: '#1e1f20',
     borderRadius: '24px',
     display: 'flex',
-    alignItems: 'flex-end',
-    padding: { default: '12px 16px', [MOBILE]: '8px 12px' },
+    alignItems: 'center', // Centraliza verticalmente o textarea e o botão
+    padding: { default: '8px 16px', [MOBILE]: '6px 12px' },
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: { default: 'transparent', ':focus-within': '#444746' },
@@ -537,25 +601,11 @@ const s = stylex.create({
     lineHeight: '1.5',
     resize: 'none',
     outlineWidth: 0,
-    padding: '0 8px',
+    padding: '8px', // Adicionado padding vertical para centralizar o placeholder
+    margin: 0,
     maxHeight: { default: '200px', [MOBILE]: '120px' },
     fontFamily: 'inherit',
-  },
-  sendButton: {
-    background: 'none',
-    borderWidth: 0,
-    color: '#c2e7ff',
-    cursor: 'pointer',
-    padding: '8px',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: { default: 'transparent', ':hover': '#333538' },
-  },
-  sendButtonDisabled: {
-    color: '#555',
-    cursor: 'not-allowed',
-    backgroundColor: 'transparent',
+    boxSizing: 'border-box',
+    display: 'block',
   },
 });
