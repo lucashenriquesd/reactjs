@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import * as stylex from '@stylexjs/stylex';
 import { getApiBaseUrl } from './config/api';
 
@@ -22,6 +22,14 @@ export default function App() {
   const [chat, setChat] = useState([
     { role: 'ai', text: 'Olá! Sou seu assistente local (Gemma 4). Como posso ajudar?' },
   ]);
+
+  // Referência para o final do chat
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Efeito para rolar a tela sempre que o chat ou o loading mudarem
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [chat, isLoading]);
 
   const startNewChat = () => {
     setIsStateless(false);
@@ -115,22 +123,18 @@ export default function App() {
           for (const line of lines) {
             const trimmedLine = line.trim();
 
-            // Ignora linhas vazias ou metadados de SSE como "id: 1" ou "event: message"
             if (!trimmedLine || trimmedLine.startsWith('id:') || trimmedLine.startsWith('event:')) {
               continue;
             }
 
-            // Captura apenas o que vem depois de "data: "
             if (trimmedLine.startsWith('data:')) {
-              // Remove o prefixo "data:" e limpa espaços
               const jsonString = trimmedLine.replace(/^data:/, '').trim();
 
-              if (jsonString === '[DONE]') continue; // Tratamento de fechamento comum em SSE
+              if (jsonString === '[DONE]') continue; 
 
               try {
                 const parsed = JSON.parse(jsonString);
                 
-                // Baseado no seu log, o texto vem em parsed.data
                 const textChunk = parsed.data ?? parsed.response ?? parsed.message?.content ?? '';
 
                 if (textChunk) {
@@ -152,7 +156,6 @@ export default function App() {
                   }
                 }
               } catch (e) {
-                // Se der erro no parse de um chunk, ignora silenciosamente para não sujar a tela
                 console.warn("Ignorando chunk inválido:", jsonString);
               }
             }
@@ -249,6 +252,9 @@ export default function App() {
                 </div>
               </div>
             )}
+            
+            {/* Elemento âncora para forçar o scroll para o final */}
+            <div ref={messagesEndRef} />
           </div>
         </div>
 
@@ -432,6 +438,8 @@ const s = stylex.create({
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
+    // Adiciona scroll suave para melhorar a UX caso não esteja stremando rápido
+    scrollBehavior: 'smooth',
   },
   chatWrapper: {
     width: '100%',
